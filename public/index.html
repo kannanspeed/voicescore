@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Score Agent</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Voice Score Agent</h1>
+            <p>Record your voice for 30 seconds and get scored on grammar, fluency, and confidence</p>
+        </header>
+        
+        <div class="recorder-container">
+            <div class="recorder-status">
+                <div id="status-indicator">Ready to record</div>
+                <div id="timer">00:00</div>
+            </div>
+            
+            <div id="realtime-transcription" class="hidden">
+                <h3>Real-time Transcription</h3>
+                <div id="realtime-text">Speak into your microphone...</div>
+            </div>
+            
+            <div class="recorder-controls">
+                <button id="recordBtn" class="btn">Start Recording</button>
+                <button id="stopBtn" class="btn" disabled>Stop Recording</button>
+            </div>
+            
+            <div id="audio-playback" class="hidden">
+                <h3>Your Recording</h3>
+                <audio id="recorded-audio" controls></audio>
+                <button id="submitBtn" class="btn">Analyze Recording</button>
+            </div>
+            
+            <div id="loading" class="hidden">
+                <div class="spinner"></div>
+                <p>Analyzing your speech...</p>
+            </div>
+        </div>
+        
+        <div id="results" class="hidden">
+            <h2>Your Voice Analysis Results</h2>
+            
+            <div class="transcription-section">
+                <h3>Speech Transcription</h3>
+                <div id="transcription-text" class="transcription-box"></div>
+            </div>
+            
+            <div class="scores-container">
+                <div class="score-item">
+                    <div class="score-label">Grammar</div>
+                    <div class="score-bar-container">
+                        <div id="grammar-score" class="score-bar"></div>
+                        <span id="grammar-percentage">0%</span>
+                    </div>
+                    <div id="grammar-feedback" class="feedback"></div>
+                </div>
+                
+                <div class="score-item">
+                    <div class="score-label">Fluency</div>
+                    <div class="score-bar-container">
+                        <div id="fluency-score" class="score-bar"></div>
+                        <span id="fluency-percentage">0%</span>
+                    </div>
+                    <div id="fluency-feedback" class="feedback"></div>
+                </div>
+                
+                <div class="score-item">
+                    <div class="score-label">Confidence</div>
+                    <div class="score-bar-container">
+                        <div id="confidence-score" class="score-bar"></div>
+                        <span id="confidence-percentage">0%</span>
+                    </div>
+                    <div id="confidence-feedback" class="feedback"></div>
+                </div>
+                
+                <div class="score-item">
+                    <div class="score-label">Pronunciation</div>
+                    <div class="score-bar-container">
+                        <div id="pronunciation-score" class="score-bar"></div>
+                        <span id="pronunciation-percentage">0%</span>
+                    </div>
+                    <div id="pronunciation-feedback" class="feedback"></div>
+                </div>
+                
+                <div class="score-item overall">
+                    <div class="score-label">Overall Score</div>
+                    <div class="score-bar-container">
+                        <div id="overall-score" class="score-bar"></div>
+                        <span id="overall-percentage">0%</span>
+                    </div>
+                    <div id="overall-feedback" class="feedback"></div>
+                </div>
+            </div>
+            
+            <div class="explanation-section">
+                <h3>How We Score</h3>
+                <div class="explanation-content">
+                    <p><strong>Grammar:</strong> We analyze sentence structure, verb tense consistency, article usage, subject-verb agreement, and other grammatical elements.</p>
+                    <p><strong>Fluency:</strong> We evaluate speech flow, natural pauses, rhythm, and lack of hesitations or unnecessary fillers.</p>
+                    <p><strong>Confidence:</strong> We assess voice strength, clear articulation, and consistent volume throughout your speech.</p>
+                    <p><strong>Pronunciation:</strong> We analyze clarity of individual sounds, word stress patterns, and overall intelligibility.</p>
+                    <p><strong>Overall:</strong> A comprehensive score based on your performance across all categories, giving you a complete picture of your English speaking skills.</p>
+                </div>
+            </div>
+            
+            <button id="resetBtn" class="btn">Record Again</button>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html> 
