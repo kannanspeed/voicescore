@@ -5,6 +5,16 @@ const cors = require('cors');
 const fs = require('fs');
 const WaveFile = require('wavefile').WaveFile;
 const { spawn } = require('child_process');
+const natural = require('natural');
+const nlp = require('compromise');
+const sentiment = require('sentiment');
+
+// Initialize NLP tools
+const tokenizer = new natural.WordTokenizer();
+const TfIdf = natural.TfIdf;
+const tfidf = new TfIdf();
+const sentimentAnalyzer = new sentiment();
+const spellcheck = new natural.Spellcheck();
 
 const app = express();
 const port = 3002;
@@ -30,14 +40,30 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
+// Common English words and filler words to analyze fluency
+const fillerWords = ['um', 'uh', 'like', 'you know', 'basically', 'actually', 'literally', 'so', 'well', 'i mean'];
+
+// Grammar patterns to check
+const grammarPatterns = [
+  { pattern: /\b(is|are|was|were) done\b/gi, issue: 'passive voice' },
+  { pattern: /\b(has|have|had) (went|gone|did|done)\b/gi, issue: 'incorrect perfect tense' },
+  { pattern: /\bi (is|are|was|were)\b/gi, issue: 'subject-verb agreement' },
+  { pattern: /\b(me|him|her|them) and (I|he|she|they)\b/gi, issue: 'pronoun order' },
+  { pattern: /\bdoesn't has\b/gi, issue: 'incorrect auxiliary' },
+  { pattern: /\bdon't has\b/gi, issue: 'incorrect auxiliary' },
+  { pattern: /\ba apple\b|\ba hour\b/gi, issue: 'incorrect article' },
+  { pattern: /\ban banana\b|\ban car\b/gi, issue: 'incorrect article' }
+];
+
 // Generate feedback based on scores
-function generateFeedback(scores) {
+function generateFeedback(scores, details) {
   const feedback = {
     grammar: '',
     fluency: '',
     confidence: '',
     pronunciation: '',
-    overall: ''
+    overall: '',
+    details: details
   };
   
   // Grammar feedback
@@ -45,8 +71,14 @@ function generateFeedback(scores) {
     feedback.grammar = "Excellent grammar usage with very few mistakes. You demonstrated proper sentence structure and tense consistency.";
   } else if (scores.grammar >= 80) {
     feedback.grammar = "Good grammar with occasional mistakes. Your sentence structure is mostly correct, but there are some minor issues with tenses.";
+    if (details.grammarIssues.length > 0) {
+      feedback.grammar += " Pay attention to: " + details.grammarIssues.join(", ") + ".";
+    }
   } else {
     feedback.grammar = "Your grammar needs improvement. Focus on sentence structure, verb tenses, and article usage.";
+    if (details.grammarIssues.length > 0) {
+      feedback.grammar += " Common issues found: " + details.grammarIssues.join(", ") + ".";
+    }
   }
   
   // Fluency feedback
@@ -54,8 +86,14 @@ function generateFeedback(scores) {
     feedback.fluency = "Excellent fluency. You speak smoothly with natural pauses and rhythm.";
   } else if (scores.fluency >= 80) {
     feedback.fluency = "Good speaking flow with occasional hesitations. Your speech has a good rhythm but sometimes lacks natural transitions.";
+    if (details.fillerWordCount > 2) {
+      feedback.fluency += ` Try to reduce filler words (${details.fillerWordsFound.join(", ")}).`;
+    }
   } else {
     feedback.fluency = "Your speech contains frequent pauses and hesitations. Practice speaking more to improve your flow.";
+    if (details.fillerWordCount > 0) {
+      feedback.fluency += ` Reduce filler words like "${details.fillerWordsFound.join(", ")}".`;
+    }
   }
   
   // Confidence feedback
@@ -63,8 +101,14 @@ function generateFeedback(scores) {
     feedback.confidence = "Very confident speech. You maintain a strong, clear voice throughout.";
   } else if (scores.confidence >= 80) {
     feedback.confidence = "Good confidence level. Your voice is mostly strong but occasionally becomes quieter or uncertain.";
+    if (details.sentimentScore < 0) {
+      feedback.confidence += " Try using more positive language to sound more confident.";
+    }
   } else {
     feedback.confidence = "You need to work on your confidence. Try to maintain a strong, steady voice even when unsure.";
+    if (details.shortSentences > 2) {
+      feedback.confidence += " Try using more complex sentence structures.";
+    }
   }
   
   // Pronunciation feedback
@@ -72,8 +116,14 @@ function generateFeedback(scores) {
     feedback.pronunciation = "Excellent pronunciation with very clear articulation of sounds and words.";
   } else if (scores.pronunciation >= 80) {
     feedback.pronunciation = "Good pronunciation with occasional mispronounced words. Most sounds are clear.";
+    if (details.possibleMispronunciations.length > 0) {
+      feedback.pronunciation += ` Check pronunciation of: ${details.possibleMispronunciations.join(", ")}.`;
+    }
   } else {
     feedback.pronunciation = "Your pronunciation needs improvement. Focus on difficult sounds and practice word stress.";
+    if (details.possibleMispronunciations.length > 0) {
+      feedback.pronunciation += ` Practice these words: ${details.possibleMispronunciations.join(", ")}.`;
+    }
   }
   
   // Overall feedback
@@ -81,11 +131,27 @@ function generateFeedback(scores) {
     feedback.overall = "Outstanding English speaking skills. You communicate effectively with excellent clarity.";
   } else if (scores.overall >= 80) {
     feedback.overall = "Good overall speaking skills. Keep practicing to refine your English proficiency.";
+    feedback.overall += ` Your strengths are ${getTopStrengths(scores)}.`;
   } else {
     feedback.overall = "You have a basic foundation but need more practice to improve your overall English speaking skills.";
+    feedback.overall += ` Focus on improving ${getAreasToImprove(scores)}.`;
   }
   
   return feedback;
+}
+
+// Helper function to identify top strengths
+function getTopStrengths(scores) {
+  const metrics = ['grammar', 'fluency', 'confidence', 'pronunciation'];
+  const sortedMetrics = [...metrics].sort((a, b) => scores[b] - scores[a]);
+  return sortedMetrics.slice(0, 2).join(' and ');
+}
+
+// Helper function to identify areas to improve
+function getAreasToImprove(scores) {
+  const metrics = ['grammar', 'fluency', 'confidence', 'pronunciation'];
+  const sortedMetrics = [...metrics].sort((a, b) => scores[a] - scores[b]);
+  return sortedMetrics.slice(0, 2).join(' and ');
 }
 
 // Function to convert audio for further processing
@@ -137,41 +203,130 @@ function recognizeSpeech(audioFilePath) {
   });
 }
 
-// Analyze speech (local implementation)
+// Enhanced speech analysis with NLP
 async function analyzeSpeech(filePath, transcription) {
   try {
-    // For real implementation, you would analyze different aspects of speech
-    // Here we're using some basic heuristics for demonstration
+    // Prepare analysis details
+    const analysisDetails = {
+      grammarIssues: [],
+      fillerWordCount: 0,
+      fillerWordsFound: [],
+      shortSentences: 0,
+      longSentences: 0,
+      possibleMispronunciations: [],
+      sentimentScore: 0,
+      vocabulary: {
+        unique: 0,
+        total: 0
+      },
+      complexity: 0
+    };
     
-    // For grammar, we could use a language model to evaluate grammar quality
-    // For this demo, we'll use word count, sentence structure etc.
-    const wordCount = transcription.split(/\s+/).filter(w => w.length > 0).length;
-    const sentenceCount = transcription.split(/[.!?]+/).filter(s => s.trim().length > 0).length;
+    // Tokenize the text
+    const tokens = tokenizer.tokenize(transcription.toLowerCase());
+    analysisDetails.vocabulary.total = tokens.length;
     
-    // Calculate scores based on the transcription and audio properties
-    // These are placeholder algorithms - in a real system you'd use ML models
+    // Count unique words (vocabulary richness)
+    const uniqueWords = new Set(tokens);
+    analysisDetails.vocabulary.unique = uniqueWords.size;
     
-    // Grammar score based on words per sentence and other factors
-    const wordsPerSentence = wordCount / Math.max(1, sentenceCount);
+    // Detect sentences
+    const sentences = transcription.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    const sentenceCount = sentences.length;
+    
+    // Analyze sentence length
+    sentences.forEach(sentence => {
+      const wordCount = sentence.trim().split(/\s+/).length;
+      if (wordCount < 5) analysisDetails.shortSentences++;
+      if (wordCount > 20) analysisDetails.longSentences++;
+    });
+    
+    // Analyze vocabulary complexity using TF-IDF
+    tfidf.addDocument(transcription);
+    const terms = tfidf.listTerms(0);
+    const complexityScore = terms.reduce((sum, term) => sum + term.tfidf, 0) / Math.max(1, terms.length);
+    analysisDetails.complexity = complexityScore;
+    
+    // Check for grammar patterns
+    grammarPatterns.forEach(pattern => {
+      const matches = transcription.match(pattern.pattern);
+      if (matches && matches.length > 0) {
+        analysisDetails.grammarIssues.push(pattern.issue);
+      }
+    });
+    
+    // Check filler words
+    fillerWords.forEach(word => {
+      const regex = new RegExp('\\b' + word + '\\b', 'gi');
+      const matches = transcription.match(regex);
+      if (matches && matches.length > 0) {
+        analysisDetails.fillerWordCount += matches.length;
+        analysisDetails.fillerWordsFound.push(word);
+      }
+    });
+    
+    // Remove duplicates from filler words found
+    analysisDetails.fillerWordsFound = [...new Set(analysisDetails.fillerWordsFound)];
+    
+    // Spellcheck for possible mispronunciations
+    const words = transcription.toLowerCase().match(/\b\w+\b/g) || [];
+    words.forEach(word => {
+      if (word.length > 3 && !spellcheck.isCorrect(word)) {
+        analysisDetails.possibleMispronunciations.push(word);
+      }
+    });
+    
+    // Limit the number of mispronunciations shown
+    analysisDetails.possibleMispronunciations = analysisDetails.possibleMispronunciations.slice(0, 3);
+    
+    // Sentiment analysis for confidence
+    const sentimentResult = sentimentAnalyzer.analyze(transcription);
+    analysisDetails.sentimentScore = sentimentResult.score;
+    
+    // Process the transcription with compromise for part-of-speech analysis
+    const doc = nlp(transcription);
+    
+    // Subject-verb agreement check
+    const subjects = doc.match('#Noun').out('array');
+    const verbs = doc.match('#Verb').out('array');
+    
+    // Calculate lexical density (content words / total words ratio)
+    const contentWords = doc.match('#Noun|#Verb|#Adjective|#Adverb').out('array');
+    const lexicalDensity = contentWords.length / tokens.length;
+    
+    // Calculate scores with more advanced metrics
+    
+    // Grammar score based on issues found, lexical density, and complexity
+    const grammarIssuesPenalty = Math.min(30, analysisDetails.grammarIssues.length * 10);
     const grammarScore = Math.min(100, Math.max(70, 
-      75 + (wordsPerSentence >= 5 && wordsPerSentence <= 20 ? 15 : 5)
+      90 - grammarIssuesPenalty + (lexicalDensity > 0.5 ? 10 : 0)
     ));
     
-    // Fluency score (in a real system, we'd analyze pauses, speed, etc.)
-    const fluencyScore = Math.min(100, Math.max(70, 80 + Math.random() * 15));
+    // Fluency score based on filler words, sentence structure variety
+    const fillerWordPenalty = Math.min(20, analysisDetails.fillerWordCount * 3);
+    const sentenceVarietyBonus = (analysisDetails.shortSentences > 0 && analysisDetails.longSentences > 0) ? 10 : 0;
+    const fluencyScore = Math.min(100, Math.max(70, 
+      90 - fillerWordPenalty + sentenceVarietyBonus
+    ));
     
-    // Confidence score
-    const confidenceScore = Math.min(100, Math.max(70, 80 + Math.random() * 15));
+    // Confidence score based on sentiment, vocabulary
+    const vocabularyRatio = analysisDetails.vocabulary.unique / Math.max(1, analysisDetails.vocabulary.total);
+    const confidenceScore = Math.min(100, Math.max(70, 
+      80 + (analysisDetails.sentimentScore > 0 ? 10 : 0) + (vocabularyRatio > 0.6 ? 10 : 0)
+    ));
     
-    // Pronunciation score
-    const pronunciationScore = Math.min(100, Math.max(70, 80 + Math.random() * 15));
+    // Pronunciation score based on spellcheck and word complexity
+    const pronunciationErrors = analysisDetails.possibleMispronunciations.length;
+    const pronunciationScore = Math.min(100, Math.max(70, 
+      90 - (pronunciationErrors * 5)
+    ));
     
-    // Overall score - weighted average of all scores
+    // Overall score - weighted average with more weight on grammar and fluency
     const overallScore = Math.round(
-      (grammarScore * 0.25) + 
-      (fluencyScore * 0.25) + 
-      (confidenceScore * 0.25) + 
-      (pronunciationScore * 0.25)
+      (grammarScore * 0.3) + 
+      (fluencyScore * 0.3) + 
+      (confidenceScore * 0.2) + 
+      (pronunciationScore * 0.2)
     );
     
     return {
@@ -179,7 +334,8 @@ async function analyzeSpeech(filePath, transcription) {
       fluency: Math.round(fluencyScore),
       confidence: Math.round(confidenceScore),
       pronunciation: Math.round(pronunciationScore),
-      overall: Math.round(overallScore)
+      overall: Math.round(overallScore),
+      analysisDetails: analysisDetails
     };
   } catch (error) {
     console.error('Error analyzing speech:', error);
@@ -211,15 +367,15 @@ app.post('/api/analyze', upload.single('audio'), async (req, res) => {
       console.log('Using simulated transcription:', transcription);
     }
     
-    // Analyze the speech
-    const scores = await analyzeSpeech(filePath, transcription);
+    // Analyze the speech with NLP
+    const analysisResults = await analyzeSpeech(filePath, transcription);
     
-    // Generate feedback based on scores
-    const feedback = generateFeedback(scores);
+    // Generate feedback based on scores and details
+    const feedback = generateFeedback(analysisResults, analysisResults.analysisDetails);
     
     // Create response
     const analysis = {
-      ...scores,
+      ...analysisResults,
       transcription: transcription,
       feedback: feedback
     };
